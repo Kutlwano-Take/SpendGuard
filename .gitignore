@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.aws-sam/
+.parcel-cache/
+.turbo/
+.next/
+.vite/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and local config
+.env
+.env.*
+env.local.json
+samconfig.toml
+
+# IDE/editor
+.DS_Store
+.vscode/
+.idea/
+

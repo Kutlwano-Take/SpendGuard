@@ -1,0 +1,16 @@
+{
+  "prod": {
+    "awscloudformation": {
+      "amplifyAppId": "d23ix241s4yuzf",
+      "AmplifyAppId": "d23ix241s4yuzf",
+      "AuthRoleName": "amplify-spendguard-prod-f8a2c-authRole",
+      "UnauthRoleArn": "arn:aws:iam::701742813629:role/amplify-spendguard-prod-f8a2c-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::701742813629:role/amplify-spendguard-prod-f8a2c-authRole",
+      "Region": "af-south-1",
+      "DeploymentBucketName": "amplify-spendguard-prod-f8a2c-deployment",
+      "UnauthRoleName": "amplify-spendguard-prod-f8a2c-unauthRole",
+      "StackName": "amplify-spendguard-prod-f8a2c",
+      "StackId": "arn:aws:cloudformation:af-south-1:701742813629:stack/amplify-spendguard-prod-f8a2c/a9dcc480-f218-11f0-b19e-0aecf1b1fc6d"
+    }
+  }
+}

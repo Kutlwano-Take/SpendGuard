@@ -1,0 +1,410 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SpendGuard local serverless stack
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref ExpensesTable
+  Api:
+    Cors:
+      AllowOrigin: "'*'"
+      AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+      AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+
+Resources:
+  SpendGuardApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: local
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+            Identity:
+              Header: Authorization
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  ExpensesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ReceiptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods:
+              - GET
+              - PUT
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            AllowedHeaders:
+              - "*"
+            MaxAge: 3000
+
+  CreateExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/createExpense.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        CreateExpense:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /expenses
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/createExpense.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  ListExpensesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/listExpenses.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        ListExpenses:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /expenses
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/listExpenses.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  CreateBudgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/createBudget.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        CreateBudget:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /budgets
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/createBudget.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  DeleteBudgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/deleteBudget.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        DeleteBudget:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /budgets/{budgetId}
+            Method: DELETE
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/deleteBudget.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  BudgetSummaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/getBudgetSummary.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        GetBudgetSummary:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /budgets/summary
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/getBudgetSummary.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  GetSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/getSettings.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        GetSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /settings
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/getSettings.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  UpdateSettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/updateSettings.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        UpdateSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /settings
+            Method: PUT
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/updateSettings.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  UploadReceiptUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/getUploadUrl.handler
+      Environment:
+        Variables:
+          RECEIPTS_BUCKET: !Ref ReceiptsBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ReceiptsBucket
+      Events:
+        GetUploadUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /receipts/upload-url
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/getUploadUrl.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  ProcessReceiptFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/processReceipt.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        ReceiptUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref ReceiptsBucket
+            Events: s3:ObjectCreated:*
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/processReceipt.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  SendOverspendingAlertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/sendOverspendingAlert.handler
+      Environment:
+        Variables:
+          SES_FROM_EMAIL: !Sub "noreply@spendguard.${AWS::AccountId}.com"
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Events:
+        SendOverspendingAlert:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /email/overspending-alert
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/sendOverspendingAlert.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  SendWeeklySummaryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/sendWeeklySummary.handler
+      Environment:
+        Variables:
+          SES_FROM_EMAIL: !Sub "noreply@spendguard.${AWS::AccountId}.com"
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Events:
+        SendWeeklySummary:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /email/weekly-summary
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/sendWeeklySummary.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway base URL
+    Value: !Sub "https://${SpendGuardApi}.execute-api.${AWS::Region}.amazonaws.com/local"
+  ReceiptsBucketName:
+    Description: S3 bucket for receipt uploads
+    Value: !Ref ReceiptsBucket
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito User Pool App Client ID
+    Value: !Ref UserPoolClient
