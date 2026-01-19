@@ -1,8 +1,8 @@
-import type { ChangeEvent, FormEvent } from "react";
+import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Authenticator, ThemeProvider, createTheme } from "@aws-amplify/ui-react";
 import "@aws-amplify/ui-react/styles.css";
-import ProgressRing from "./components/ProgressRing";
+import ProgressRing, { type CategorySegment } from "./components/ProgressRing";
 import StatCard from "./components/StatCard";
 import {
   createBudget,
@@ -14,7 +14,6 @@ import {
   sendOverspendingAlert,
   sendWeeklySummary,
   updateSettings,
-  uploadReceipt,
 } from "./features/api";
 import { budgets as sampleBudgets, expenses as sampleExpenses } from "./features/sampleData";
 import type { Budget, Expense } from "./features/types";
@@ -56,11 +55,10 @@ const App = () => {
   const [budgetData, setBudgetData] = useState<Budget[]>(sampleBudgets);
   const [expenseData, setExpenseData] = useState<Expense[]>(sampleExpenses);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [receiptStatus, setReceiptStatus] = useState<string | null>(null);
   const [view, setView] = useState<"dashboard" | "insights" | "budgets" | "settings">("dashboard");
   const [expenseForm, setExpenseForm] = useState({
     amount: "",
-    category: "Dining",
+    category: "Groceries",
     date: "",
     notes: "",
   });
@@ -111,29 +109,6 @@ const App = () => {
         setApiError(err instanceof Error ? err.message : "Failed to load data");
       });
   }, []);
-
-  const handleReceiptUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setReceiptStatus("Uploading receipt...");
-    try {
-      await uploadReceipt(file);
-      setReceiptStatus("Receipt uploaded. Waiting for OCR...");
-      setTimeout(async () => {
-        try {
-          const refreshed = await listExpenses();
-          setExpenseData(refreshed);
-          setReceiptStatus("Receipt processed.");
-        } catch (refreshError) {
-          setReceiptStatus(
-            refreshError instanceof Error ? refreshError.message : "Failed to refresh expenses"
-          );
-        }
-      }, 3000);
-    } catch (uploadError) {
-      setReceiptStatus(uploadError instanceof Error ? uploadError.message : "Upload failed");
-    }
-  };
 
   const handleExpenseChange = (field: keyof typeof expenseForm, value: string) => {
     setExpenseForm((prev) => ({ ...prev, [field]: value }));
@@ -269,6 +244,16 @@ const App = () => {
   const totalBudget = budgetData.reduce((sum: number, item: Budget) => sum + item.limit, 0);
   const utilization = totalBudget > 0 ? budgetedSpent / totalBudget : 0;
 
+  const categorySegments = useMemo(() => {
+    const segments: CategorySegment[] = Array.from(spentByCategory.entries()).map(
+      ([category, amount]) => ({
+        category,
+        amount,
+      })
+    );
+    return segments.sort((a, b) => b.amount - a.amount);
+  }, [spentByCategory]);
+
   const handleQuickAddScroll = () => {
     quickAddRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     setQuickAddHighlight(true);
@@ -372,14 +357,26 @@ const App = () => {
                       </button>
                     </div>
                     <div className="hero-card">
-                      <ProgressRing value={utilization} size={96} />
-                      <div>
-                        <p className="stat-title">Budgeted spending</p>
-                        <p className="stat-value">{Math.round(utilization * 100)}%</p>
-                        <p className="stat-subtitle">
-                          {formatCurrency(budgetedSpent)} of {formatCurrency(totalBudget)}
-                        </p>
-                      </div>
+                      {categorySegments.length > 0 ? (
+                        <ProgressRing
+                          categories={categorySegments}
+                          size={120}
+                          stroke={10}
+                          showLegend={true}
+                          animateOnMount={true}
+                        />
+                      ) : (
+                        <>
+                          <ProgressRing value={utilization} size={96} />
+                          <div>
+                            <p className="stat-title">Budgeted spending</p>
+                            <p className="stat-value">{Math.round(utilization * 100)}%</p>
+                            <p className="stat-subtitle">
+                              {formatCurrency(budgetedSpent)} of {formatCurrency(totalBudget)}
+                            </p>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </section>
 
@@ -460,9 +457,31 @@ const App = () => {
                             value={expenseForm.category}
                             onChange={(event) => handleExpenseChange("category", event.target.value)}
                           >
-                            <option>Dining</option>
-                            <option>Groceries</option>
-                            <option>Transport</option>
+                            {[
+                              "Groceries",
+                              "Dining",
+                              "Transport",
+                              "Rent",
+                              "Utilities",
+                              "Internet",
+                              "Phone",
+                              "Insurance",
+                              "Healthcare",
+                              "Fitness",
+                              "Entertainment",
+                              "Shopping",
+                              "Education",
+                              "Childcare",
+                              "Travel",
+                              "Subscriptions",
+                              "Gifts",
+                              "Pets",
+                              "Household",
+                              "Savings",
+                              "Other",
+                            ].map((cat) => (
+                              <option key={cat}>{cat}</option>
+                            ))}
                           </select>
                         </label>
                         <label>
@@ -486,11 +505,6 @@ const App = () => {
                           Save expense
                         </button>
                         {expenseStatus && <p className="stat-subtitle">{expenseStatus}</p>}
-                        <label>
-                          Receipt upload
-                          <input type="file" accept="image/*" onChange={handleReceiptUpload} />
-                        </label>
-                        {receiptStatus && <p className="stat-subtitle">{receiptStatus}</p>}
                       </form>
                     </div>
                   </section>
@@ -517,7 +531,7 @@ const App = () => {
                       {expenseData.length === 0 ? (
                         <p className="stat-subtitle">No expenses yet — add your first entry.</p>
                       ) : (
-                        (showAllExpenses ? expenseData : expenseData.slice(0, 5)).map(
+                        (showAllExpenses ? expenseData : expenseData.slice(0, 1)).map(
                           (expense: Expense) => (
                             <div className="expense-row" key={expense.id}>
                               <div>

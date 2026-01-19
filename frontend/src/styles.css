@@ -578,8 +578,19 @@ select {
   border-radius: 12px;
 }
 
+.progress-ring-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+
 .progress-ring {
   transform: rotate(-90deg);
+}
+
+.progress-ring.progress-ring-animate {
+  animation: ring-pulse 0.8s ease-out;
 }
 
 .progress-ring-track {
@@ -592,6 +603,79 @@ select {
   stroke: #f4d06f;
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s ease;
+}
+
+.progress-ring-segment {
+  fill: transparent;
+  stroke-linecap: round;
+}
+
+.progress-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+}
+
+.legend-item:hover {
+  transform: scale(1.08);
+  background: rgba(244, 208, 111, 0.08);
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.legend-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #e6e7ea;
+  flex: 1;
+}
+
+.legend-amount {
+  font-size: 11px;
+  color: #9aa0aa;
+  font-weight: 400;
+}
+
+@keyframes progress-fill {
+  from {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ring-pulse {
+  0% {
+    opacity: 0.3;
+    filter: blur(2px);
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+  }
 }
 
 .mobile-nav {
