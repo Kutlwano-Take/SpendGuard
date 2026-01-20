@@ -1,48 +1,36 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { docClient, getTableName } from "../lib/dynamo.js";
+import { error, json } from "../lib/response.js";
 
-const client = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(client);
+const getUserId = (event: APIGatewayProxyEvent): string | null => {
+  return (
+    (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
+    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
+    null
+  );
+};
 
-export const handler = async (event: any) => {
-  try {
-    const userId = event.requestContext.authorizer.claims.sub;
-    const budgetId = event.pathParameters?.budgetId;
-    const tableName = process.env.TABLE_NAME || "SpendGuardTable";
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const userId = getUserId(event);
+  if (!userId) {
+    return error(401, "Unauthorized");
+  }
 
-    if (!budgetId) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ message: "Budget ID is required" }),
-      };
-    }
+  const budgetId = event.pathParameters?.budgetId;
+  if (!budgetId) {
+    return error(400, "Budget ID is required");
+  }
 
-    // Delete the budget item
-    const command = new DeleteCommand({
-      TableName: tableName,
+  await docClient.send(
+    new DeleteCommand({
+      TableName: getTableName(),
       Key: {
         PK: `USER#${userId}`,
         SK: `BUDGET#${budgetId}`,
       },
-    });
+    })
+  );
 
-    await docClient.send(command);
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: "Budget deleted successfully",
-        id: budgetId,
-      }),
-    };
-  } catch (error) {
-    console.error("Delete budget error:", error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        message: "Failed to delete budget",
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-    };
-  }
+  return json(200, { message: "Budget deleted successfully", id: budgetId });
 };

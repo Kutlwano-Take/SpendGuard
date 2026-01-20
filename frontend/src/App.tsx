@@ -18,15 +18,6 @@ import {
 import { budgets as sampleBudgets, expenses as sampleExpenses } from "./features/sampleData";
 import type { Budget, Expense } from "./features/types";
 
-const currency = "ZAR";
-
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat("en-ZA", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value);
-
 const theme = createTheme({
   name: "spendguard",
   tokens: {
@@ -82,6 +73,25 @@ const App = () => {
   const quickAddRef = useRef<HTMLDivElement | null>(null);
   const expenseListRef = useRef<HTMLDivElement | null>(null);
 
+  const formatCurrency = useMemo(() => {
+    const currencyCode = settings.currency || "ZAR";
+    try {
+      const formatter = new Intl.NumberFormat("en-ZA", {
+        style: "currency",
+        currency: currencyCode,
+        maximumFractionDigits: 0,
+      });
+      return (value: number) => formatter.format(value);
+    } catch {
+      const fallback = new Intl.NumberFormat("en-ZA", {
+        style: "currency",
+        currency: "ZAR",
+        maximumFractionDigits: 0,
+      });
+      return (value: number) => fallback.format(value);
+    }
+  }, [settings.currency]);
+
   useEffect(() => {
     if (!import.meta.env.VITE_API_BASE_URL) return;
     Promise.all([listExpenses(), getBudgetSummary(), getSettings()])
@@ -130,16 +140,16 @@ const App = () => {
         notes: expenseForm.notes || undefined,
       });
       const refreshed = await listExpenses();
+      const refreshedBudgets = await getBudgetSummary();
       setExpenseData(refreshed);
+      setBudgetData(refreshedBudgets);
       setExpenseForm({ amount: "", category: expenseForm.category, date: "", notes: "" });
       setExpenseStatus("Expense saved.");
 
       if (settings.alertsEnabled && settings.email) {
-        const relevantBudget = budgetData.find((b) => b.category === expenseForm.category);
+        const relevantBudget = refreshedBudgets.find((b) => b.category === expenseForm.category);
         if (relevantBudget) {
-          const categorySpent = refreshed
-            .filter((e) => e.category === expenseForm.category)
-            .reduce((sum, e) => sum + e.amount, 0);
+          const categorySpent = relevantBudget.spent;
           if (categorySpent > relevantBudget.limit) {
             try {
               await sendOverspendingAlert({
@@ -210,49 +220,67 @@ const App = () => {
     return "alert";
   };
 
-  const spentByCategory = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const expense of expenseData) {
-      totals.set(expense.category, (totals.get(expense.category) ?? 0) + expense.amount);
-    }
-    return totals;
-  }, [expenseData]);
+  const toDateOnly = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 10);
+  };
 
-  const computedBudgets = useMemo(
-    () =>
-      budgetData.map((budget) => ({
-        ...budget,
-        spent: spentByCategory.get(budget.category) ?? budget.spent ?? 0,
-      })),
-    [budgetData, spentByCategory]
+  const isInCurrentMonth = (dateValue: string): boolean => {
+    const dateOnly = toDateOnly(dateValue);
+    if (!dateOnly) return false;
+    const monthPrefix = new Date().toISOString().slice(0, 7);
+    return dateOnly.startsWith(monthPrefix);
+  };
+
+  const computedBudgets = useMemo(() => budgetData, [budgetData]);
+
+  const budgetedSpent = useMemo(
+    () => budgetData.reduce((sum, budget) => sum + (budget.spent ?? 0), 0),
+    [budgetData]
   );
-
-  const budgetedSpent = useMemo(() => {
-    const budgetedCategories = new Set(budgetData.map((b) => b.category));
-    return expenseData
-      .filter((e) => budgetedCategories.has(e.category))
-      .reduce((sum, item) => sum + item.amount, 0);
-  }, [expenseData, budgetData]);
 
   const unbudgetedSpent = useMemo(() => {
     const budgetedCategories = new Set(budgetData.map((b) => b.category));
     return expenseData
-      .filter((e) => !budgetedCategories.has(e.category))
+      .filter((e) => !budgetedCategories.has(e.category) && isInCurrentMonth(e.date))
       .reduce((sum, item) => sum + item.amount, 0);
   }, [expenseData, budgetData]);
+
+  const averageDailySpend = useMemo(() => {
+    const endDate = new Date();
+    const startDate = new Date(endDate);
+    startDate.setUTCDate(startDate.getUTCDate() - 29);
+    const start = startDate.toISOString().slice(0, 10);
+    const end = endDate.toISOString().slice(0, 10);
+    const total = expenseData
+      .filter((expense) => {
+        const dateOnly = toDateOnly(expense.date);
+        if (!dateOnly) return false;
+        return dateOnly >= start && dateOnly <= end;
+      })
+      .reduce((sum, expense) => sum + expense.amount, 0);
+    return total / 30;
+  }, [expenseData]);
 
   const totalBudget = budgetData.reduce((sum: number, item: Budget) => sum + item.limit, 0);
   const utilization = totalBudget > 0 ? budgetedSpent / totalBudget : 0;
 
   const categorySegments = useMemo(() => {
-    const segments: CategorySegment[] = Array.from(spentByCategory.entries()).map(
-      ([category, amount]) => ({
-        category,
-        amount,
-      })
-    );
+    const totals = new Map<string, number>();
+    for (const expense of expenseData) {
+      if (!isInCurrentMonth(expense.date)) continue;
+      totals.set(expense.category, (totals.get(expense.category) ?? 0) + expense.amount);
+    }
+    const segments: CategorySegment[] = Array.from(totals.entries()).map(([category, amount]) => ({
+      category,
+      amount,
+    }));
     return segments.sort((a, b) => b.amount - a.amount);
-  }, [spentByCategory]);
+  }, [expenseData]);
 
   const handleQuickAddScroll = () => {
     quickAddRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -425,6 +453,14 @@ const App = () => {
                                   <div className={`budget-pill ${statusClass}`}>
                                     {percentage}%
                                   </div>
+                                  <button
+                                    type="button"
+                                    className="icon-button delete-btn"
+                                    onClick={() => handleDeleteBudget(budget.id, budget.category)}
+                                    title="Delete budget"
+                                  >
+                                    ✕
+                                  </button>
                                 </div>
                               </div>
                             );
@@ -560,7 +596,7 @@ const App = () => {
                   <div className="insights-grid">
                     <StatCard
                       title="Average daily spend"
-                      value={formatCurrency(expenseData.reduce((sum, e) => sum + e.amount, 0) / 30)}
+                      value={formatCurrency(averageDailySpend)}
                       subtitle="Last 30 days"
                     />
                     <StatCard

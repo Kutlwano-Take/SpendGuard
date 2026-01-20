@@ -1,16 +1,28 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
-import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient, getTableName } from "../lib/dynamo.js";
-import { json } from "../lib/response.js";
+import { error, json } from "../lib/response.js";
 import { sendEmail, overspendingAlertTemplate } from "../lib/email.js";
 
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const userId =
+const getUserId = (event: APIGatewayProxyEvent): string | null => {
+  return (
     (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
-    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined);
+    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
+    null
+  );
+};
 
+const getUserEmailFromClaims = (event: APIGatewayProxyEvent): string | null => {
+  const email =
+    (event.requestContext.authorizer?.claims?.email as string | undefined) ??
+    (event.requestContext.authorizer?.jwt?.claims?.email as string | undefined);
+  return typeof email === "string" && email.trim() ? email.trim() : null;
+};
+
+export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const userId = getUserId(event);
   if (!userId) {
-    return json(401, { message: "Unauthorized" });
+    return error(401, "Unauthorized");
   }
 
   try {
@@ -18,7 +30,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const { category, spent, limit } = body;
 
     if (!category || spent === undefined || limit === undefined) {
-      return json(400, { message: "Missing required fields: category, spent, limit" });
+      return error(400, "Missing required fields: category, spent, limit");
     }
 
     // Check if user has alerts enabled
@@ -34,10 +46,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       return json(200, { message: "Alerts disabled, no email sent" });
     }
 
-    // Get user email from Cognito (would come from claims in real scenario)
-    // For now, we'll need to store user email in settings
-    if (!settings?.email) {
-      return json(400, { message: "User email not configured" });
+    const recipientEmail = getUserEmailFromClaims(event) ?? (settings?.email as string | undefined);
+    if (!recipientEmail || typeof recipientEmail !== "string" || !recipientEmail.trim()) {
+      return error(400, "User email not configured");
     }
 
     // Only send alert if overspent (>100%)
@@ -47,9 +58,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
     }
 
     // Generate and send email
-    const emailTemplate = overspendingAlertTemplate(category, spent, limit, settings.email);
+    const emailTemplate = overspendingAlertTemplate(category, spent, limit, recipientEmail);
     await sendEmail({
-      to: settings.email,
+      to: recipientEmail,
       subject: emailTemplate.subject,
       html: emailTemplate.html,
       text: emailTemplate.text,

@@ -7,6 +7,15 @@ import type { ExpenseInput } from "../models.js";
 
 type ExpensePayload = ExpenseInput & { notes?: string; note?: string };
 
+const toDateOnly = (value: string): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
 const parseBody = (event: APIGatewayProxyEvent): ExpensePayload | null => {
   if (!event.body) return null;
   try {
@@ -48,7 +57,7 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
   const expenseId = randomUUID();
   const createdAt = new Date().toISOString();
-  const date = body.date ?? createdAt;
+  const date = toDateOnly(body.date ?? createdAt) ?? createdAt.slice(0, 10);
   const notes = body.notes ?? body.note;
   const pk = `USER#${userId}`;
   const sk = `EXPENSE#${date}`;
