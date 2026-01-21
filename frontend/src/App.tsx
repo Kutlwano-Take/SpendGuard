@@ -213,6 +213,7 @@ const App = () => {
   };
 
   const getBudgetStatus = (spent: number, limit: number): "safe" | "warn" | "alert" | "overspent" => {
+    if (!limit || Number.isNaN(limit) || limit <= 0) return "safe";
     const percentage = (spent / limit) * 100;
     if (percentage > 100) return "overspent";
     if (percentage <= 50) return "safe";
@@ -220,7 +221,13 @@ const App = () => {
     return "alert";
   };
 
-  const toDateOnly = (value: string): string | null => {
+  const getBudgetPercentage = (spent: number, limit: number): number => {
+    if (!limit || Number.isNaN(limit) || limit <= 0) return 0;
+    return Math.round((spent / limit) * 100);
+  };
+
+  const toDateOnly = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
     const trimmed = value.trim();
     if (!trimmed) return null;
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
@@ -229,7 +236,7 @@ const App = () => {
     return parsed.toISOString().slice(0, 10);
   };
 
-  const isInCurrentMonth = (dateValue: string): boolean => {
+  const isInCurrentMonth = (dateValue: unknown): boolean => {
     const dateOnly = toDateOnly(dateValue);
     if (!dateOnly) return false;
     const monthPrefix = new Date().toISOString().slice(0, 7);
@@ -439,7 +446,7 @@ const App = () => {
                           <p className="stat-subtitle">No budgets yet — add one to get insights.</p>
                         ) : (
                           computedBudgets.slice(0, 3).map((budget: Budget) => {
-                            const percentage = Math.round((budget.spent / budget.limit) * 100);
+                            const percentage = getBudgetPercentage(budget.spent, budget.limit);
                             const statusClass = getBudgetStatus(budget.spent, budget.limit);
                             return (
                               <div className="budget-row" key={budget.id}>
@@ -658,7 +665,7 @@ const App = () => {
                       <p className="stat-subtitle">No budgets yet — add one to get insights.</p>
                     ) : (
                       computedBudgets.map((budget) => {
-                        const percentage = Math.round((budget.spent / budget.limit) * 100);
+                        const percentage = getBudgetPercentage(budget.spent, budget.limit);
                         const statusClass = getBudgetStatus(budget.spent, budget.limit);
                         return (
                           <div className="budget-row" key={budget.id}>

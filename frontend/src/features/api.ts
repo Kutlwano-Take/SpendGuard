@@ -1,33 +1,71 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import type { Budget, Expense } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+  "https://a1tghz4kb2.execute-api.af-south-1.amazonaws.com/local";
 
-const getAuthToken = async (): Promise<string> => {
+const getAuthTokens = async (): Promise<{ primary: string; secondary?: string }> => {
   const session = await fetchAuthSession();
-  const token = session.tokens?.idToken?.toString();
-  if (!token) {
+  const accessToken = session.tokens?.accessToken?.toString();
+  const idToken = session.tokens?.idToken?.toString();
+
+  const primary = accessToken ?? idToken;
+  const secondary = accessToken && idToken ? (primary === accessToken ? idToken : accessToken) : undefined;
+
+  if (!primary) {
     throw new Error("Auth token not available");
   }
-  return token;
+  return { primary, secondary };
 };
 
-const request = async <T>(path: string): Promise<T> => {
+const buildAuthHeaderValues = (tokens: { primary: string; secondary?: string }): string[] => {
+  const rawTokens = [tokens.primary, tokens.secondary].filter(Boolean) as string[];
+  const values: string[] = [];
+  for (const token of rawTokens) {
+    values.push(`Bearer ${token}`);
+    values.push(token);
+  }
+  return Array.from(new Set(values));
+};
+
+const requestWithAuth = async <T>(
+  path: string,
+  init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }
+): Promise<T> => {
   if (!API_BASE_URL) {
     throw new Error("API base URL not configured");
   }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+  const tokens = await getAuthTokens();
+  const authValues = buildAuthHeaderValues(tokens);
+
+  let lastResponse: Response | null = null;
+
+  for (const authValue of authValues) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+        Authorization: authValue,
+      },
+    });
+    lastResponse = response;
+
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    if (response.status !== 401 && response.status !== 403) {
+      break;
+    }
   }
-  return (await response.json()) as T;
+
+  const status = lastResponse?.status ?? 0;
+  throw new Error(`Request failed: ${status}`);
 };
+
+const request = async <T>(path: string): Promise<T> => requestWithAuth<T>(path);
 
 export const listExpenses = async (): Promise<Expense[]> => {
   const result = await request<{ items: Record<string, unknown>[] }>("/expenses");
@@ -69,40 +107,17 @@ export const createBudget = async (payload: {
   limit: number;
   period: "weekly" | "monthly";
 }): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/budgets`, {
+  await requestWithAuth<void>("/budgets", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    throw new Error(`Create budget failed: ${response.status}`);
-  }
 };
 
 export const getUploadUrl = async (file: File): Promise<{ uploadUrl: string; key: string }> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/receipts/upload-url`, {
+  return await requestWithAuth<{ uploadUrl: string; key: string }>("/receipts/upload-url", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
     body: JSON.stringify({ filename: file.name, contentType: file.type }),
   });
-  if (!response.ok) {
-    throw new Error(`Upload URL request failed: ${response.status}`);
-  }
-  return (await response.json()) as { uploadUrl: string; key: string };
 };
 
 export const uploadReceipt = async (file: File): Promise<void> => {
@@ -128,21 +143,10 @@ export const createExpense = async (payload: {
   date?: string;
   notes?: string;
 }): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/expenses`, {
+  await requestWithAuth<void>("/expenses", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    throw new Error(`Create expense failed: ${response.status}`);
-  }
 };
 
 export const getSettings = async (): Promise<{
@@ -169,37 +173,19 @@ export const updateSettings = async (payload: {
   currency?: string;
   email?: string;
 }): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/settings`, {
+  await requestWithAuth<void>("/settings", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    throw new Error(`Update settings failed: ${response.status}`);
-  }
 };
 
 export const deleteBudget = async (budgetId: string): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/budgets/${encodeURIComponent(budgetId)}`, {
+  await requestWithAuth<void>(`/budgets/${encodeURIComponent(budgetId)}`, {
     method: "DELETE",
     headers: {
-      Authorization: `Bearer ${authToken}`,
+      "Content-Type": "application/json",
     },
   });
-  if (!response.ok) {
-    throw new Error(`Delete budget failed: ${response.status}`);
-  }
 };
 
 export const sendOverspendingAlert = async (payload: {
@@ -207,35 +193,17 @@ export const sendOverspendingAlert = async (payload: {
   spent: number;
   limit: number;
 }): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/email/overspending-alert`, {
+  await requestWithAuth<void>("/email/overspending-alert", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) {
-    throw new Error(`Send overspending alert failed: ${response.status}`);
-  }
 };
 
 export const sendWeeklySummary = async (): Promise<void> => {
-  if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
-  }
-  const authToken = await getAuthToken();
-  const response = await fetch(`${API_BASE_URL}/email/weekly-summary`, {
+  await requestWithAuth<void>("/email/weekly-summary", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${authToken}`,
+      "Content-Type": "application/json",
     },
   });
-  if (!response.ok) {
-    throw new Error(`Send weekly summary failed: ${response.status}`);
-  }
 };

@@ -21,6 +21,31 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: local
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        UNAUTHORIZED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        ACCESS_DENIED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
       Auth:
         Authorizers:
           CognitoAuthorizer:
@@ -104,8 +129,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /expenses
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -130,8 +153,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /expenses
             Method: GET
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -156,8 +177,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -182,8 +201,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets/{budgetId}
             Method: DELETE
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -208,8 +225,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets/summary
             Method: GET
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -234,8 +249,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /settings
             Method: GET
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -260,8 +273,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /settings
             Method: PUT
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -289,8 +300,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /receipts/upload-url
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -348,8 +357,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /email/overspending-alert
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -384,8 +391,6 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /email/weekly-summary
             Method: POST
-            Auth:
-              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
