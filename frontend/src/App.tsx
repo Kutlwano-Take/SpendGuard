@@ -94,7 +94,10 @@ const App = () => {
   }, [settings.currency]);
 
   useEffect(() => {
-    if (!import.meta.env.VITE_API_BASE_URL) return;
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      console.info("Local dev: skipping API calls");
+      return;
+    }
     Promise.all([listExpenses(), getBudgetSummary(), getSettings()])
       .then(([expenses, budgets, savedSettings]) => {
         setExpenseData(expenses);
