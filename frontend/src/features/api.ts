@@ -34,7 +34,9 @@ const requestWithAuth = async <T>(
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }
 ): Promise<T> => {
   if (!API_BASE_URL) {
-    throw new Error("API base URL not configured");
+    // Local dev: no-op to avoid any network errors
+    console.info("Local dev: API call no-op", path, init);
+    return {} as T;
   }
 
   // Local dev: bypass auth if VITE_API_BASE_URL is not pointing to the deployed backend
