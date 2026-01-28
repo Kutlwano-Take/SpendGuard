@@ -36,6 +36,24 @@ const requestWithAuth = async <T>(
   if (!API_BASE_URL) {
     throw new Error("API base URL not configured");
   }
+
+  // Local dev: bypass auth if VITE_API_BASE_URL is not pointing to the deployed backend
+  const isLocalDev = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL.includes("localhost");
+  if (isLocalDev) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Request failed: ${response.status}`);
+    }
+    return (await response.json()) as T;
+  }
+
+  // Deployed: attempt auth
   const tokens = await getAuthTokens();
   const authValues = buildAuthHeaderValues(tokens);
 
