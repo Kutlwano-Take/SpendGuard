@@ -188,6 +188,15 @@ export const deleteBudget = async (budgetId: string): Promise<void> => {
   });
 };
 
+export const deleteExpense = async (expenseId: string): Promise<void> => {
+  await requestWithAuth<void>(`/expenses/${encodeURIComponent(expenseId)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+};
+
 export const sendOverspendingAlert = async (payload: {
   category: string;
   spent: number;

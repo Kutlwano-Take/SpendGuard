@@ -8,6 +8,7 @@ import {
   createBudget,
   createExpense,
   deleteBudget,
+  deleteExpense,
   getBudgetSummary,
   getSettings,
   listExpenses,
@@ -185,6 +186,22 @@ const App = () => {
       setBudgetStatus("Budget deleted.");
     } catch (err) {
       setBudgetStatus(err instanceof Error ? err.message : "Failed to delete budget");
+    }
+  };
+
+  const handleDeleteExpense = async (expenseId: string, expenseCategory: string, expenseAmount: number) => {
+    const ok = window.confirm(`Delete expense "${expenseCategory}" - ${formatCurrency(expenseAmount)}? This cannot be undone.`);
+    if (!ok) return;
+    setExpenseStatus(null);
+    try {
+      await deleteExpense(expenseId);
+      const refreshed = await listExpenses();
+      const refreshedBudgets = await getBudgetSummary();
+      setExpenseData(refreshed);
+      setBudgetData(refreshedBudgets);
+      setExpenseStatus("Expense deleted.");
+    } catch (err) {
+      setExpenseStatus(err instanceof Error ? err.message : "Failed to delete expense");
     }
   };
 
@@ -583,7 +600,17 @@ const App = () => {
                               </div>
                               <div className="expense-meta">
                                 <span>{expense.date}</span>
-                                <strong>{formatCurrency(expense.amount)}</strong>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <strong>{formatCurrency(expense.amount)}</strong>
+                                  <button
+                                    type="button"
+                                    className="icon-button delete-btn"
+                                    onClick={() => handleDeleteExpense(expense.id, expense.category, expense.amount)}
+                                    title="Delete expense"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )
