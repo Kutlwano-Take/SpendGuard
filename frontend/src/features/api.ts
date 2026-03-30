@@ -1,9 +1,7 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import type { Budget, Expense } from "./types";
 
-const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  "https://a1tghz4kb2.execute-api.af-south-1.amazonaws.com/local";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
 
 const getAuthTokens = async (): Promise<{ primary: string; secondary?: string }> => {
   const session = await fetchAuthSession();
@@ -19,76 +17,43 @@ const getAuthTokens = async (): Promise<{ primary: string; secondary?: string }>
   return { primary, secondary };
 };
 
-const buildAuthHeaderValues = (tokens: { primary: string; secondary?: string }): string[] => {
-  const rawTokens = [tokens.primary, tokens.secondary].filter(Boolean) as string[];
-  const values: string[] = [];
-  for (const token of rawTokens) {
-    values.push(`Bearer ${token}`);
-    values.push(token);
+const getErrorMessage = async (response: Response): Promise<string> => {
+  try {
+    const payload = (await response.json()) as { message?: unknown };
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message;
+    }
+  } catch {
+    // Ignore invalid/non-JSON error bodies and fall back to status.
   }
-  return Array.from(new Set(values));
+
+  return `Request failed: ${response.status}`;
 };
 
-const requestWithAuth = async <T>(
+export const requestWithAuth = async <T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }
 ): Promise<T> => {
-  if (!API_BASE_URL) {
-    // Local dev: no-op to avoid any network errors
-    console.info("Local dev: API call no-op", path, init);
-    return {} as T;
+  const { primary } = await getAuthTokens();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+      Authorization: `Bearer ${primary}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
   }
-
-  // Local dev: bypass auth if VITE_API_BASE_URL is not pointing to the deployed backend
-  const isLocalDev = !import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL.includes("localhost");
-  if (isLocalDev) {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Request failed: ${response.status}`);
-    }
-    return (await response.json()) as T;
+  if (response.status === 204) {
+    return undefined as T;
   }
-
-  // Deployed: attempt auth
-  const tokens = await getAuthTokens();
-  const authValues = buildAuthHeaderValues(tokens);
-
-  let lastResponse: Response | null = null;
-
-  for (const authValue of authValues) {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-        Authorization: authValue,
-      },
-    });
-    lastResponse = response;
-
-    if (response.ok) {
-      return (await response.json()) as T;
-    }
-
-    if (response.status !== 401 && response.status !== 403) {
-      break;
-    }
-  }
-
-  const status = lastResponse?.status ?? 0;
-  throw new Error(`Request failed: ${status}`);
+  return response.json() as Promise<T>;
 };
 
-const request = async <T>(path: string): Promise<T> => requestWithAuth<T>(path);
-
 export const listExpenses = async (): Promise<Expense[]> => {
-  const result = await request<{ items: Record<string, unknown>[] }>("/expenses");
+  const result = await requestWithAuth<{ items: Record<string, unknown>[] }>("/expenses");
   return (result.items ?? []).map((item, idx) => ({
     id:
       (item.expenseId as string) ??
@@ -108,7 +73,7 @@ export const listExpenses = async (): Promise<Expense[]> => {
 };
 
 export const getBudgetSummary = async (): Promise<Budget[]> => {
-  const result = await request<{ items: Record<string, unknown>[] }>("/budgets/summary");
+  const result = await requestWithAuth<{ items: Record<string, unknown>[] }>("/budgets/summary");
   return (result.items ?? []).map((item, idx) => ({
     id:
       (item.budgetId as string) ??
@@ -175,7 +140,7 @@ export const getSettings = async (): Promise<{
   currency?: string;
   email?: string;
 } | null> => {
-  const result = await request<{ item: Record<string, unknown> | null }>("/settings");
+  const result = await requestWithAuth<{ item: Record<string, unknown> | null }>("/settings");
   if (!result.item) return null;
   return {
     alertsEnabled:

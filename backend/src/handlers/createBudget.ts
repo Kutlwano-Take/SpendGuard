@@ -2,32 +2,29 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { docClient, getTableName } from "../lib/dynamo.js";
-import { error, json } from "../lib/response.js";
+import { withApiResponse } from "../lib/handler.js";
+import { ValidationError, json } from "../lib/response.js";
 import type { BudgetInput } from "../models.js";
+import { validateNumber, validateCategory, validatePeriod } from "../lib/validation.js";
+import { getUserId } from "../lib/auth.js";
 
-const parseBody = (event: APIGatewayProxyEvent): BudgetInput | null => {
-  if (!event.body) return null;
+const parseBody = (event: APIGatewayProxyEvent): BudgetInput => {
+  if (!event.body) {
+    throw new ValidationError("Invalid JSON payload");
+  }
   try {
     return JSON.parse(event.body) as BudgetInput;
   } catch {
-    return null;
+    throw new ValidationError("Invalid JSON payload");
   }
 };
 
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   const body = parseBody(event);
-  if (!body) {
-    return error(400, "Invalid JSON payload");
-  }
-
-  if (!body.category || typeof body.limit !== "number" || !body.period) {
-    return error(400, "category, limit (number), and period are required");
-  }
-
-  const userId =
-    (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
-    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
-    "demo";
+  const category = validateCategory(body.category);
+  const limit = validateNumber(body.limit, 0, 10000000);
+  const period = validatePeriod(body.period);
+  const userId = getUserId(event);
 
   const budgetId = randomUUID();
   const createdAt = new Date().toISOString();
@@ -43,10 +40,14 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         userId,
         budgetId,
         createdAt,
-        ...body,
+        category,
+        limit,
+        period,
       },
     })
   );
 
   return json(201, { budgetId, createdAt });
 };
+
+export const handler = withApiResponse(run);

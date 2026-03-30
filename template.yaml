@@ -2,48 +2,101 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: SpendGuard local serverless stack
 
+Parameters:
+  FrontendDomain:
+    Type: String
+    Description: Frontend domain for production CORS
+    Default: "localhost:5173"
+  Environment:
+    Type: String
+    Description: Environment name
+    Default: "development"
+    AllowedValues: ["development", "production"]
+  SESFromEmail:
+    Type: String
+    Description: "Verified SES sender email address (e.g. noreply@yourdomain.com). Must be verified in AWS SES before deployment."
+    Default: "local@example.com"
+  StageName:
+    Type: String
+    Description: Deployment stage name
+    Default: "dev"
+    AllowedValues: ["dev", "prod"]
+  BedrockModelId:
+    Type: String
+    Description: Bedrock foundation model ID for AI insights
+    Default: "anthropic.claude-3-sonnet-20240229-v1:0"
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, "production"]
+
 Globals:
   Function:
     Runtime: nodejs20.x
-    Timeout: 10
+    Architectures:
+      - x86_64
     MemorySize: 256
+    Timeout: 30
     Environment:
       Variables:
         TABLE_NAME: !Ref ExpensesTable
+        BUCKET_NAME: !Ref ReceiptsBucket
+        LOCAL_USER_ID: local-user-123
+        LOCAL_USER_EMAIL: local@example.com
+        ENVIRONMENT: !Ref Environment
+        FRONTEND_DOMAIN: !Ref FrontendDomain
+        CORS_ALLOWED_ORIGINS: !If
+          - IsProduction
+          - !Sub "https://${FrontendDomain}"
+          - "http://localhost:5173,http://localhost:3000"
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+    Tracing: Active
   Api:
     Cors:
-      AllowOrigin: "'*'"
+      AllowOrigin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
       AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
       AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
 
 Resources:
+  LogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/spendguard
+      RetentionInDays: 30
+
   SpendGuardApi:
     Type: AWS::Serverless::Api
     Properties:
-      StageName: local
+      Name: !Sub "spendguard-${StageName}"
+      StageName: !Ref StageName
       GatewayResponses:
         DEFAULT_4XX:
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Origin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
         DEFAULT_5XX:
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Origin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
         UNAUTHORIZED:
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Origin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
         ACCESS_DENIED:
           ResponseParameters:
             Headers:
-              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Origin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
+              Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        THROTTLED:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !If [IsProduction, !Sub "'https://${FrontendDomain}'", "'*'"]
               Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'"
               Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
       Auth:
@@ -52,6 +105,11 @@ Resources:
             UserPoolArn: !GetAtt UserPool.Arn
             Identity:
               Header: Authorization
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingBurstLimit: !If [IsProduction, 50, 10]
+          ThrottlingRateLimit: !If [IsProduction, 25, 5]
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -60,6 +118,17 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      MfaConfiguration: "OFF"
+      UserPoolTags:
+        Project: SpendGuard
+        Environment: !Ref AWS::StackName
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -98,6 +167,15 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: SpendGuard
+        - Key: Environment
+          Value: !Ref AWS::StackName
 
   ReceiptsBucket:
     Type: AWS::S3::Bucket
@@ -108,11 +186,33 @@ Resources:
               - GET
               - PUT
               - HEAD
-            AllowedOrigins:
-              - "*"
+            AllowedOrigins: !If
+              - IsProduction
+              - - !Sub "https://${FrontendDomain}"
+              - - "http://localhost:5173"
+                - "http://localhost:3000"
             AllowedHeaders:
               - "*"
             MaxAge: 3000
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      Tags:
+        - Key: Project
+          Value: SpendGuard
+        - Key: Environment
+          Value: !Ref AWS::StackName
 
   CreateExpenseFunction:
     Type: AWS::Serverless::Function
@@ -120,8 +220,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/createExpense.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         CreateExpense:
           Type: Api
@@ -129,6 +233,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /expenses
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -144,8 +250,14 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/listExpenses.handler
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - !GetAtt ExpensesTable.Arn
+                - !Sub "${ExpensesTable.Arn}/index/GSI1"
       Events:
         ListExpenses:
           Type: Api
@@ -153,6 +265,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /expenses
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -168,8 +282,13 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/deleteExpense.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         DeleteExpense:
           Type: Api
@@ -177,6 +296,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /expenses/{expenseId}
             Method: DELETE
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -192,8 +313,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/createBudget.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         CreateBudget:
           Type: Api
@@ -201,6 +326,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -216,8 +343,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/deleteBudget.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:DeleteItem
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         DeleteBudget:
           Type: Api
@@ -225,6 +356,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets/{budgetId}
             Method: DELETE
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -240,8 +373,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/getBudgetSummary.handler
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         GetBudgetSummary:
           Type: Api
@@ -249,11 +386,49 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /budgets/summary
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints:
           - src/handlers/getBudgetSummary.ts
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+
+  GetInsightsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/getInsights.handler
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource: !GetAtt ExpensesTable.Arn
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}"
+      Events:
+        GetInsights:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendGuardApi
+            Path: /insights
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/getInsights.ts
         Minify: false
         Target: es2020
         Sourcemap: true
@@ -264,8 +439,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/getSettings.handler
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         GetSettings:
           Type: Api
@@ -273,6 +452,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /settings
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -288,8 +469,12 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/updateSettings.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ExpensesTable.Arn
       Events:
         UpdateSettings:
           Type: Api
@@ -297,6 +482,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /settings
             Method: PUT
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -324,6 +511,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /receipts/upload-url
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -339,14 +528,40 @@ Resources:
       CodeUri: backend
       Handler: src/handlers/processReceipt.handler
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !GetAtt ExpensesTable.Arn
+        - S3ReadPolicy:
+            BucketName: !Ref ReceiptsBucket
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - textract:AnalyzeExpense
+              # Textract does not support resource-level ARNs for AnalyzeExpense
+              Resource: "*"
       Events:
-        ReceiptUploaded:
-          Type: S3
+        ReceiptUpload:
+          Type: EventBridgeRule
           Properties:
-            Bucket: !Ref ReceiptsBucket
-            Events: s3:ObjectCreated:*
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - Object Created
+              detail:
+                bucket:
+                  name:
+                    - !Ref ReceiptsBucket
+                object:
+                  key:
+                    - suffix: .jpg
+                    - suffix: .jpeg
+                    - suffix: .png
+                    - suffix: .pdf
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -363,17 +578,21 @@ Resources:
       Handler: src/handlers/sendOverspendingAlert.handler
       Environment:
         Variables:
-          SES_FROM_EMAIL: !Sub "noreply@spendguard.${AWS::AccountId}.com"
+          SES_FROM_EMAIL: !Ref SESFromEmail
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !GetAtt ExpensesTable.Arn
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
-              Resource: "*"
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SESFromEmail}"
       Events:
         SendOverspendingAlert:
           Type: Api
@@ -381,6 +600,8 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /email/overspending-alert
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -397,17 +618,24 @@ Resources:
       Handler: src/handlers/sendWeeklySummary.handler
       Environment:
         Variables:
-          SES_FROM_EMAIL: !Sub "noreply@spendguard.${AWS::AccountId}.com"
+          SES_FROM_EMAIL: !Ref SESFromEmail
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref ExpensesTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt ExpensesTable.Arn
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - ses:SendEmail
                 - ses:SendRawEmail
-              Resource: "*"
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SESFromEmail}"
       Events:
         SendWeeklySummary:
           Type: Api
@@ -415,6 +643,15 @@ Resources:
             RestApiId: !Ref SpendGuardApi
             Path: /email/weekly-summary
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+        WeeklySummarySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 8 ? * MON *)
+            Description: "Send weekly spending summary to all opted-in users every Monday at 08:00 UTC"
+            Enabled: !If [IsProduction, true, false]
+            Name: !Sub "SpendGuardWeeklySummary-${StageName}"
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -424,10 +661,300 @@ Resources:
         Target: es2020
         Sourcemap: true
 
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SpendGuardAlarms
+      DisplayName: SpendGuard Application Alarms
+
+  ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-Lambda-Errors
+      AlarmDescription: Lambda function error rate is too high
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CreateExpenseFunction
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  ThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-API-Throttles
+      AlarmDescription: API Gateway throttling is too high
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "spendguard-${StageName}"
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  DynamoDBThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-DynamoDB-Throttles
+      AlarmDescription: DynamoDB throttling events
+      Namespace: AWS/DynamoDB
+      MetricName: ThrottledRequests
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: TableName
+          Value: !Ref ExpensesTable
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  SendOverspendingAlertErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-SendOverspendingAlert-Errors
+      AlarmDescription: SendOverspendingAlert Lambda error rate is too high
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SendOverspendingAlertFunction
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  SendWeeklySummaryErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-SendWeeklySummary-Errors
+      AlarmDescription: SendWeeklySummary Lambda error rate is too high
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SendWeeklySummaryFunction
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  GetInsightsErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-GetInsights-Errors
+      AlarmDescription: GetInsights Lambda error rate is too high
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GetInsightsFunction
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  ApiGateway4xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: SpendGuard-API-4xx-Rate
+      AlarmDescription: API Gateway 4xx error rate is elevated (may indicate auth or validation issues)
+      Namespace: AWS/ApiGateway
+      MetricName: 4XXError
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "spendguard-${StageName}"
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  SpendGuardWAF:
+    Type: AWS::WAFv2::WebACL
+    Condition: IsProduction
+    Properties:
+      Name: SpendGuardWebACL
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Rules:
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSetMetric
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputsMetric
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: SpendGuardWAFMetric
+      Tags:
+        - Key: Project
+          Value: SpendGuard
+        - Key: Environment
+          Value: !Ref AWS::StackName
+
+  SpendGuardWAFAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: IsProduction
+    DependsOn: SpendGuardWAF
+    Properties:
+      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${SpendGuardApi}/stages/${StageName}"
+      WebACLArn: !GetAtt SpendGuardWAF.Arn
+
+  SpendGuardDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "SpendGuard-${AWS::StackName}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 24, "height": 6,
+              "properties": {
+                "title": "Lambda Errors",
+                "metrics": [
+                  ["AWS/Lambda", "Errors", "FunctionName", "${CreateExpenseFunction}", {"label": "CreateExpense"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${ListExpensesFunction}", {"label": "ListExpenses"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${DeleteExpenseFunction}", {"label": "DeleteExpense"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${CreateBudgetFunction}", {"label": "CreateBudget"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${DeleteBudgetFunction}", {"label": "DeleteBudget"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${BudgetSummaryFunction}", {"label": "BudgetSummary"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${GetInsightsFunction}", {"label": "GetInsights"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${GetSettingsFunction}", {"label": "GetSettings"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${UpdateSettingsFunction}", {"label": "UpdateSettings"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${SendOverspendingAlertFunction}", {"label": "OverspendingAlert"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${SendWeeklySummaryFunction}", {"label": "WeeklySummary"}]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "API Gateway - Request Count and Error Rates",
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", "ApiName", "spendguard-${StageName}", {"label": "Total Requests", "stat": "Sum"}],
+                  ["AWS/ApiGateway", "4XXError", "ApiName", "spendguard-${StageName}", {"label": "4xx Errors", "stat": "Sum"}],
+                  ["AWS/ApiGateway", "5XXError", "ApiName", "spendguard-${StageName}", {"label": "5xx Errors", "stat": "Sum"}]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "API Gateway - Latency P99",
+                "metrics": [
+                  ["AWS/ApiGateway", "Latency", "ApiName", "spendguard-${StageName}", {"stat": "p99", "label": "P99 Latency (ms)"}]
+                ],
+                "period": 300,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "DynamoDB - Consumed Capacity and Throttles",
+                "metrics": [
+                  ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${ExpensesTable}", {"label": "Read CU", "stat": "Sum"}],
+                  ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${ExpensesTable}", {"label": "Write CU", "stat": "Sum"}],
+                  ["AWS/DynamoDB", "ThrottledRequests", "TableName", "${ExpensesTable}", {"label": "Throttled", "stat": "Sum"}]
+                ],
+                "period": 300,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "SES - Send Statistics",
+                "metrics": [
+                  ["AWS/SES", "Send", {"label": "Sent", "stat": "Sum"}],
+                  ["AWS/SES", "Bounce", {"label": "Bounced", "stat": "Sum"}],
+                  ["AWS/SES", "Complaint", {"label": "Complaints", "stat": "Sum"}]
+                ],
+                "period": 86400,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 18, "width": 12, "height": 6,
+              "properties": {
+                "title": "S3 Receipts - Upload Activity",
+                "metrics": [
+                  ["AWS/S3", "NumberOfObjects", "BucketName", "${ReceiptsBucket}", "StorageType", "AllStorageTypes", {"label": "Object Count", "stat": "Average"}]
+                ],
+                "period": 86400,
+                "view": "timeSeries"
+              }
+            }
+          ]
+        }
+
 Outputs:
   ApiUrl:
     Description: API Gateway base URL
-    Value: !Sub "https://${SpendGuardApi}.execute-api.${AWS::Region}.amazonaws.com/local"
+    Value: !Sub "https://${SpendGuardApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
   ReceiptsBucketName:
     Description: S3 bucket for receipt uploads
     Value: !Ref ReceiptsBucket
@@ -437,3 +964,6 @@ Outputs:
   UserPoolClientId:
     Description: Cognito User Pool App Client ID
     Value: !Ref UserPoolClient
+  DashboardUrl:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home#dashboards:name=SpendGuard-${AWS::StackName}"

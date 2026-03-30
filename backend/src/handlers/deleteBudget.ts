@@ -1,33 +1,31 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient, getTableName } from "../lib/dynamo.js";
-import { error, json } from "../lib/response.js";
+import { withApiResponse } from "../lib/handler.js";
+import { ValidationError, json } from "../lib/response.js";
+import { validateId } from "../lib/validation.js";
+import { getUserId } from "../lib/auth.js";
 
-const getUserId = (event: APIGatewayProxyEvent): string | null => {
-  return (
-    (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
-    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
-    null
-  );
-};
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const userId = getUserId(event) ?? "demo";
-
+const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const userId = getUserId(event);
   const budgetId = event.pathParameters?.budgetId;
   if (!budgetId) {
-    return error(400, "Budget ID is required");
+    throw new ValidationError("Budget ID is required");
   }
+
+  const validatedBudgetId = validateId(budgetId);
 
   await docClient.send(
     new DeleteCommand({
       TableName: getTableName(),
       Key: {
         PK: `USER#${userId}`,
-        SK: `BUDGET#${budgetId}`,
+        SK: `BUDGET#${validatedBudgetId}`,
       },
     })
   );
 
-  return json(200, { message: "Budget deleted successfully", id: budgetId });
+  return json(200, { message: "Budget deleted successfully", id: validatedBudgetId });
 };
+
+export const handler = withApiResponse(run);

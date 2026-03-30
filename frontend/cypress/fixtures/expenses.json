@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "id": "expense-1",
+      "amount": 100.50,
+      "category": "Food",
+      "date": "2026-01-15",
+      "notes": "Lunch at restaurant"
+    },
+    {
+      "id": "expense-2",
+      "amount": 25.00,
+      "category": "Transport",
+      "date": "2026-01-14",
+      "notes": "Bus ticket"
+    },
+    {
+      "id": "expense-3",
+      "amount": 75.00,
+      "category": "Groceries",
+      "date": "2026-01-13",
+      "notes": "Weekly shopping"
+    }
+  ]
+}

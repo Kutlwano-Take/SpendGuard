@@ -2,62 +2,35 @@ import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { docClient, getTableName } from "../lib/dynamo.js";
-import { error, json } from "../lib/response.js";
+import { withApiResponse } from "../lib/handler.js";
+import { ValidationError, json } from "../lib/response.js";
 import type { ExpenseInput } from "../models.js";
+import { validateNumber, validateCategory, validateDate, sanitizeString } from "../lib/validation.js";
+import { getUserId } from "../lib/auth.js";
 
-type ExpensePayload = ExpenseInput & { notes?: string; note?: string };
-
-const toDateOnly = (value: string): string | null => {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
-};
-
-const parseBody = (event: APIGatewayProxyEvent): ExpensePayload | null => {
-  if (!event.body) return null;
+const parseBody = (event: APIGatewayProxyEvent): ExpenseInput => {
+  if (!event.body) {
+    throw new ValidationError("Invalid JSON payload");
+  }
   try {
-    return JSON.parse(event.body) as ExpensePayload;
+    return JSON.parse(event.body) as ExpenseInput;
   } catch {
-    return null;
+    throw new ValidationError("Invalid JSON payload");
   }
 };
 
-const getUserId = (event: APIGatewayProxyEvent): string | null => {
-  return (
-    (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
-    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
-    null
-  );
-};
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  if (process.env.AWS_SAM_LOCAL === "true" || process.env.DYNAMODB_ENDPOINT) {
-    console.log("local-config", {
-      tableName: process.env.TABLE_NAME,
-      samLocal: process.env.AWS_SAM_LOCAL,
-      dynamoEndpoint: process.env.DYNAMODB_ENDPOINT,
-    });
-  }
+const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   const body = parseBody(event);
-  if (!body) {
-    return error(400, "Invalid JSON payload");
-  }
-
-  if (typeof body.amount !== "number" || !body.category) {
-    return error(400, "amount (number) and category are required");
-  }
-
-  const userId = getUserId(event) ?? "demo";
-
   const expenseId = randomUUID();
+  const amount = validateNumber(body.amount, 0, 10000000);
+  const category = validateCategory(body.category);
+  const date = body.date ? validateDate(body.date) : new Date().toISOString().slice(0, 10);
+  const notes = body.notes ? sanitizeString(body.notes, 500) : undefined;
+
+  const userId = getUserId(event);
   const createdAt = new Date().toISOString();
-  const date = toDateOnly(body.date ?? createdAt) ?? createdAt.slice(0, 10);
-  const notes = body.notes ?? body.note;
   const pk = `USER#${userId}`;
-  const sk = `EXPENSE#${date}`;
+  const sk = `EXPENSE#${date}#${expenseId}`;
 
   await docClient.send(
     new PutCommand({
@@ -70,8 +43,8 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         userId,
         expenseId,
         createdAt,
-        amount: body.amount,
-        category: body.category,
+        amount,
+        category,
         date,
         notes,
       },
@@ -80,3 +53,5 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
 
   return json(201, { expenseId, createdAt });
 };
+
+export const handler = withApiResponse(run);

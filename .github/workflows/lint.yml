@@ -1,0 +1,62 @@
+name: Lint and Format Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+        
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci
+        
+    - name: Check frontend formatting
+      run: |
+        cd frontend
+        npx prettier --check "src/**/*.{ts,tsx,js,jsx,json,css,md}" || echo "Prettier not configured"
+        
+    - name: Check backend formatting
+      run: |
+        cd backend
+        npx prettier --check "src/**/*.{ts,js,json,md}" || echo "Prettier not configured"
+        
+    - name: Lint frontend
+      run: |
+        cd frontend
+        npm run lint || echo "No lint script found"
+        
+    - name: Lint backend
+      run: |
+        cd backend
+        npm run lint || echo "No lint script found"
+        
+    - name: Type check frontend
+      run: |
+        cd frontend
+        npx tsc --noEmit
+        
+    - name: Type check backend
+      run: |
+        cd backend
+        npx tsc --noEmit

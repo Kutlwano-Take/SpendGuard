@@ -1,7 +1,10 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { docClient, getTableName } from "../lib/dynamo.js";
-import { error, json } from "../lib/response.js";
+import { json, ValidationError } from "../lib/response.js";
+import { validateEmail, validateCurrency } from "../lib/validation.js";
+import { getUserId } from "../lib/auth.js";
+import { withApiResponse } from "../lib/handler.js";
 
 type SettingsPayload = {
   alertsEnabled?: boolean;
@@ -10,25 +13,24 @@ type SettingsPayload = {
   email?: string;
 };
 
-const parseBody = (event: APIGatewayProxyEvent): SettingsPayload | null => {
-  if (!event.body) return null;
+const parseBody = (event: APIGatewayProxyEvent): SettingsPayload => {
+  if (!event.body) throw new ValidationError("Invalid JSON payload");
   try {
     return JSON.parse(event.body) as SettingsPayload;
   } catch {
-    return null;
+    throw new ValidationError("Invalid JSON payload");
   }
 };
 
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const body = parseBody(event);
-  if (!body) {
-    return error(400, "Invalid JSON payload");
-  }
+const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  const userId = getUserId(event);
 
-  const userId =
-    (event.requestContext.authorizer?.claims?.sub as string | undefined) ??
-    (event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined) ??
-    "demo";
+  const body = parseBody(event);
+
+  const alertsEnabled = body.alertsEnabled !== undefined ? Boolean(body.alertsEnabled) : undefined;
+  const weeklySummary = body.weeklySummary !== undefined ? Boolean(body.weeklySummary) : undefined;
+  const currency = body.currency ? validateCurrency(body.currency) : undefined;
+  const email = body.email ? validateEmail(body.email) : undefined;
 
   const pk = `USER#${userId}`;
   const sk = "SETTINGS";
@@ -42,10 +44,15 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         SK: sk,
         userId,
         updatedAt,
-        ...body,
+        alertsEnabled,
+        weeklySummary,
+        currency,
+        email,
       },
     })
   );
 
   return json(200, { updatedAt });
 };
+
+export const handler = withApiResponse(run);

@@ -4,6 +4,13 @@ import { Authenticator, ThemeProvider, createTheme } from "@aws-amplify/ui-react
 import "@aws-amplify/ui-react/styles.css";
 import ProgressRing, { type CategorySegment } from "./components/ProgressRing";
 import StatCard from "./components/StatCard";
+import Charts from "./components/Charts";
+import Insights from "./components/Insights";
+import Gamification from "./components/Gamification";
+import Notifications from "./components/Notifications";
+import ReceiptUpload from "./components/ReceiptUpload";
+import { useOfflineSync } from "./hooks/useOfflineSync";
+import { useVoiceInput } from "./hooks/useVoiceInput";
 import {
   createBudget,
   createExpense,
@@ -16,7 +23,6 @@ import {
   sendWeeklySummary,
   updateSettings,
 } from "./features/api";
-import { budgets as sampleBudgets, expenses as sampleExpenses } from "./features/sampleData";
 import type { Budget, Expense } from "./features/types";
 
 const theme = createTheme({
@@ -44,10 +50,10 @@ const theme = createTheme({
 });
 
 const App = () => {
-  const [budgetData, setBudgetData] = useState<Budget[]>(sampleBudgets);
-  const [expenseData, setExpenseData] = useState<Expense[]>(sampleExpenses);
+  const [budgetData, setBudgetData] = useState<Budget[]>([]);
+  const [expenseData, setExpenseData] = useState<Expense[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [view, setView] = useState<"dashboard" | "insights" | "budgets" | "settings">("dashboard");
+  const [view, setView] = useState<"dashboard" | "insights" | "budgets" | "settings" | "gamification" | "receipts">("dashboard");
   const [expenseForm, setExpenseForm] = useState({
     amount: "",
     category: "Groceries",
@@ -74,6 +80,12 @@ const App = () => {
   const quickAddRef = useRef<HTMLDivElement | null>(null);
   const expenseListRef = useRef<HTMLDivElement | null>(null);
 
+  // Offline sync hook
+  const { isOnline, pendingCount, addOfflineAction } = useOfflineSync();
+  
+  // Voice input hook
+  const { voiceState, startListening, stopListening, parseVoiceCommand } = useVoiceInput();
+
   const formatCurrency = useMemo(() => {
     const currencyCode = settings.currency || "ZAR";
     try {
@@ -94,10 +106,6 @@ const App = () => {
   }, [settings.currency]);
 
   useEffect(() => {
-    if (!import.meta.env.VITE_API_BASE_URL) {
-      console.info("Local dev: skipping API calls");
-      return;
-    }
     Promise.all([listExpenses(), getBudgetSummary(), getSettings()])
       .then(([expenses, budgets, savedSettings]) => {
         setExpenseData(expenses);
@@ -136,13 +144,23 @@ const App = () => {
       setExpenseStatus("Enter a valid amount.");
       return;
     }
+
+    const expenseData = {
+      amount,
+      category: expenseForm.category,
+      date: expenseForm.date || undefined,
+      notes: expenseForm.notes || undefined,
+    };
+
     try {
-      await createExpense({
-        amount,
-        category: expenseForm.category,
-        date: expenseForm.date || undefined,
-        notes: expenseForm.notes || undefined,
-      });
+      if (!isOnline) {
+        addOfflineAction('CREATE_EXPENSE', expenseData);
+        setExpenseStatus("Expense saved locally (will sync when online)");
+        setExpenseForm({ amount: "", category: expenseForm.category, date: "", notes: "" });
+        return;
+      }
+
+      await createExpense(expenseData);
       const refreshed = await listExpenses();
       const refreshedBudgets = await getBudgetSummary();
       setExpenseData(refreshed);
@@ -168,9 +186,35 @@ const App = () => {
         }
       }
     } catch (submitError) {
+      if (!isOnline) {
+        addOfflineAction('CREATE_EXPENSE', expenseData);
+        setExpenseStatus("Expense saved locally (will sync when online)");
+        setExpenseForm({ amount: "", category: expenseForm.category, date: "", notes: "" });
+        return;
+      }
       setExpenseStatus(
         submitError instanceof Error ? submitError.message : "Failed to save expense"
       );
+    }
+  };
+
+  const handleVoiceCommand = () => {
+    if (voiceState.isListening) {
+      stopListening();
+      if (voiceState.transcript) {
+        const command = parseVoiceCommand(voiceState.transcript);
+        if (command && command.action === 'CREATE_EXPENSE' && command.amount) {
+          setExpenseForm({
+            amount: command.amount.toString(),
+            category: command.category || 'Other',
+            date: command.date || '',
+            notes: command.notes || `Voice: ${voiceState.transcript}`,
+          });
+          setExpenseStatus(`Voice command detected: ${command.category} - ${formatCurrency(command.amount)}`);
+        }
+      }
+    } else {
+      startListening();
     }
   };
 
@@ -277,22 +321,6 @@ const App = () => {
       .reduce((sum, item) => sum + item.amount, 0);
   }, [expenseData, budgetData]);
 
-  const averageDailySpend = useMemo(() => {
-    const endDate = new Date();
-    const startDate = new Date(endDate);
-    startDate.setUTCDate(startDate.getUTCDate() - 29);
-    const start = startDate.toISOString().slice(0, 10);
-    const end = endDate.toISOString().slice(0, 10);
-    const total = expenseData
-      .filter((expense) => {
-        const dateOnly = toDateOnly(expense.date);
-        if (!dateOnly) return false;
-        return dateOnly >= start && dateOnly <= end;
-      })
-      .reduce((sum, expense) => sum + expense.amount, 0);
-    return total / 30;
-  }, [expenseData]);
-
   const totalBudget = budgetData.reduce((sum: number, item: Budget) => sum + item.limit, 0);
   const utilization = totalBudget > 0 ? budgetedSpent / totalBudget : 0;
 
@@ -351,6 +379,8 @@ const App = () => {
                   <div className="brand">
                     <span className="brand-mark">SpendGuard</span>
                     <span className="user-email">{user?.signInDetails?.loginId}</span>
+                    {!isOnline && <span className="offline-indicator">Offline</span>}
+                    {pendingCount > 0 && <span className="pending-indicator">{pendingCount} pending</span>}
                   </div>
                   <button
                     className="nav-toggle"
@@ -359,7 +389,7 @@ const App = () => {
                     aria-expanded={isNavOpen}
                     onClick={() => setIsNavOpen((prev) => !prev)}
                   >
-                    ☰
+                    Menu
                   </button>
                 </div>
                 <div className="header-bottom">
@@ -369,7 +399,7 @@ const App = () => {
                   </button>
                 </div>
                 <nav className="nav">
-                  {(["dashboard", "insights", "budgets", "settings"] as const).map((tab) => (
+                  {(["dashboard", "insights", "budgets", "settings", "gamification", "receipts"] as const).map((tab) => (
                     <button
                       key={tab}
                       className={`nav-button ${view === tab ? "active" : ""}`}
@@ -383,7 +413,7 @@ const App = () => {
 
               {isNavOpen && (
                 <div className="mobile-nav">
-                  {(["dashboard", "insights", "budgets", "settings"] as const).map((tab) => (
+                  {(["dashboard", "insights", "budgets", "settings", "gamification", "receipts"] as const).map((tab) => (
                     <button
                       key={tab}
                       className={`nav-button ${view === tab ? "active" : ""}`}
@@ -453,6 +483,12 @@ const App = () => {
                     />
                   </section>
 
+                  <Charts 
+                    expenseData={categorySegments.map(seg => ({ category: seg.category, amount: seg.amount, color: '#3B82F6' }))} 
+                    budgetData={budgetData.map(b => ({ category: b.category, spent: b.spent, limit: b.limit, percentage: getBudgetPercentage(b.spent, b.limit) }))} 
+                    trendData={expenseData.filter(e => isInCurrentMonth(e.date)).map(e => ({ date: e.date, amount: e.amount, category: e.category }))}
+                  />
+
                   <section className="content-grid">
                     <div className="card budgets-card">
                       <div className="section-header">
@@ -463,7 +499,7 @@ const App = () => {
                       </div>
                       <div className="budgets-list">
                         {computedBudgets.length === 0 ? (
-                          <p className="stat-subtitle">No budgets yet — add one to get insights.</p>
+                          <p className="stat-subtitle">No budgets yet - add one to get insights.</p>
                         ) : (
                           computedBudgets.slice(0, 3).map((budget: Budget) => {
                             const percentage = getBudgetPercentage(budget.spent, budget.limit);
@@ -473,7 +509,7 @@ const App = () => {
                                 <div className="budget-info">
                                   <p className="budget-title">{budget.category}</p>
                                   <p className="budget-subtitle">
-                                    {formatCurrency(budget.spent)} of {formatCurrency(budget.limit)} · {budget.period}
+                                    {formatCurrency(budget.spent)} of {formatCurrency(budget.limit)} - {budget.period}
                                   </p>
                                 </div>
                                 <div className="budget-controls">
@@ -486,7 +522,7 @@ const App = () => {
                                     onClick={() => handleDeleteBudget(budget.id, budget.category)}
                                     title="Delete budget"
                                   >
-                                    ✕
+                                    x
                                   </button>
                                 </div>
                               </div>
@@ -502,8 +538,24 @@ const App = () => {
                     >
                       <div className="section-header">
                         <h2>Quick add</h2>
-                        <span className="pill">OCR ready</span>
+                        <div className="quick-add-controls">
+                          <span className="pill">OCR ready</span>
+                          <button
+                            type="button"
+                            className={`voice-button ${voiceState.isListening ? 'listening' : ''}`}
+                            onClick={handleVoiceCommand}
+                            disabled={!voiceState.isSupported}
+                            title={voiceState.isSupported ? "Voice input" : "Voice not supported"}
+                          >
+                            {voiceState.isListening ? 'Stop voice' : 'Voice input'}
+                          </button>
+                        </div>
                       </div>
+                      {voiceState.transcript && (
+                        <div className="voice-transcript">
+                          <p>Heard: "{voiceState.transcript}"</p>
+                        </div>
+                      )}
                       <form className="form-grid" onSubmit={handleExpenseSubmit}>
                         <label>
                           Amount
@@ -565,7 +617,7 @@ const App = () => {
                           />
                         </label>
                         <button type="submit" className="primary-button">
-                          Save expense
+                          {isOnline ? 'Save expense' : 'Offline - will sync'}
                         </button>
                         {expenseStatus && <p className="stat-subtitle">{expenseStatus}</p>}
                       </form>
@@ -592,7 +644,7 @@ const App = () => {
                     {apiError && <p className="stat-subtitle">API error: {apiError}</p>}
                     <div className="expense-list" ref={expenseListRef}>
                       {expenseData.length === 0 ? (
-                        <p className="stat-subtitle">No expenses yet — add your first entry.</p>
+                        <p className="stat-subtitle">No expenses yet - add your first entry.</p>
                       ) : (
                         (showAllExpenses ? expenseData : expenseData.slice(0, 1)).map(
                           (expense: Expense) => (
@@ -611,7 +663,7 @@ const App = () => {
                                     onClick={() => handleDeleteExpense(expense.id, expense.category, expense.amount)}
                                     title="Delete expense"
                                   >
-                                    ✕
+                                    x
                                   </button>
                                 </div>
                               </div>
@@ -625,29 +677,15 @@ const App = () => {
               )}
 
               {view === "insights" && (
-                <section className="card insights-view">
-                  <div className="section-header">
-                    <h2>Insights</h2>
-                    <span className="pill">AI ready</span>
-                  </div>
-                  <div className="insights-grid">
-                    <StatCard
-                      title="Average daily spend"
-                      value={formatCurrency(averageDailySpend)}
-                      subtitle="Last 30 days"
-                    />
-                    <StatCard
-                      title="Top category"
-                      value={computedBudgets[0]?.category ?? "Not set"}
-                      subtitle="Based on your budgets"
-                    />
-                    <StatCard
-                      title="Savings tip"
-                      value="Reduce dining by 10%"
-                      subtitle="Projected monthly savings"
-                    />
-                  </div>
-                </section>
+                <Insights />
+              )}
+
+              {view === "gamification" && (
+                <Gamification />
+              )}
+
+              {view === "receipts" && (
+                <ReceiptUpload />
               )}
 
               {view === "budgets" && (
@@ -692,7 +730,7 @@ const App = () => {
                   </form>
                   <div className="budgets-list">
                     {computedBudgets.length === 0 ? (
-                      <p className="stat-subtitle">No budgets yet — add one to get insights.</p>
+                      <p className="stat-subtitle">No budgets yet - add one to get insights.</p>
                     ) : (
                       computedBudgets.map((budget) => {
                         const percentage = getBudgetPercentage(budget.spent, budget.limit);
@@ -702,7 +740,7 @@ const App = () => {
                             <div className="budget-info">
                               <p className="budget-title">{budget.category}</p>
                               <p className="budget-subtitle">
-                                {formatCurrency(budget.spent)} of {formatCurrency(budget.limit)} · {budget.period}
+                                {formatCurrency(budget.spent)} of {formatCurrency(budget.limit)} - {budget.period}
                               </p>
                             </div>
                             <div className="budget-controls">
@@ -715,7 +753,7 @@ const App = () => {
                                 onClick={() => handleDeleteBudget(budget.id, budget.category)}
                                 title="Delete budget"
                               >
-                                ✕
+                                x
                               </button>
                             </div>
                           </div>
@@ -783,34 +821,18 @@ const App = () => {
 
                     <button
                       className="primary-button"
-                      type="button"
                       onClick={async () => {
                         setSettingsStatus(null);
                         try {
-                          // Basic validation
-                          if (settings.email && !settings.email.includes("@")) {
-                            setSettingsStatus("Please enter a valid email address.");
-                            return;
-                          }
-
-                          await updateSettings({
-                            alertsEnabled: settings.alertsEnabled,
-                            weeklySummary: settings.weeklySummary,
-                            currency: settings.currency,
-                            email: settings.email || undefined,
-                          });
-
-                          setSettingsStatus("Settings saved successfully! ✓");
+                          await updateSettings(settings);
+                          setSettingsStatus("Settings saved.");
                         } catch (err) {
-                          setSettingsStatus(
-                            err instanceof Error ? err.message : "Failed to save settings"
-                          );
+                          setSettingsStatus(err instanceof Error ? err.message : "Failed to save settings");
                         }
                       }}
                     >
-                      Save Settings
+                      Save settings
                     </button>
-
                     <button
                       className="secondary-button"
                       type="button"
@@ -828,26 +850,12 @@ const App = () => {
                     >
                       Send Weekly Summary Now
                     </button>
-
-                    <button className="ghost-button" type="button" onClick={signOut}>
-                      Sign out
-                    </button>
-
-                    {settingsStatus && (
-                      <p
-                        className={`stat-subtitle ${
-                          settingsStatus.includes("success") || settingsStatus.includes("sent")
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        {settingsStatus}
-                      </p>
-                    )}
+                    {settingsStatus && <p className="stat-subtitle">{settingsStatus}</p>}
                   </div>
                 </section>
               )}
 
+              <Notifications />
             </div>
           );
         }}

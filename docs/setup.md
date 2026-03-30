@@ -23,6 +23,8 @@ npm run build
 Backend Lambdas require:
 - `TABLE_NAME`: DynamoDB table name
  - `RECEIPTS_BUCKET`: S3 bucket for receipt uploads
+ - `LOCAL_USER_ID`: local fallback user id for `sam local` (defaults to `local-user-123`)
+ - `LOCAL_USER_EMAIL`: local fallback email for `sam local` (optional)
 
 Frontend expects:
 - `VITE_API_BASE_URL`: API Gateway base URL (e.g., `http://localhost:3000`)
