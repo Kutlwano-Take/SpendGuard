@@ -1,10 +1,12 @@
-import type { APIGatewayHeaders, APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { monitoring } from "./monitoring.js";
 import { corsHeaders, toError } from "./response.js";
 
 type ErrorAwareHandler = (event: APIGatewayProxyEvent) => Promise<APIGatewayProxyResult>;
 
 type ErrorAwareResult = Awaited<ReturnType<ErrorAwareHandler>> | APIGatewayProxyResult;
+type ApiHeaders = NonNullable<APIGatewayProxyResult["headers"]>;
+type RequestHeaders = Record<string, string | undefined>;
 
 const extractRequestDuration = (start: number): number => Date.now() - start;
 
@@ -22,7 +24,7 @@ export const withApiErrorHandling = <TEvent extends APIGatewayProxyEvent>(
     const start = Date.now();
     const requestId = event.requestContext?.requestId ?? "unknown";
     const action = `${event.httpMethod ?? "N/A"} ${event.path ?? event.resource ?? "N/A"}`;
-    const headers = event.headers as APIGatewayHeaders | undefined;
+    const headers = event.headers as RequestHeaders | undefined;
     const userId = getUserIdForLogging(event);
 
     try {
@@ -63,7 +65,7 @@ export const withApiErrorHandling = <TEvent extends APIGatewayProxyEvent>(
       response.headers = {
         ...response.headers,
         ...corsHeaders(headers),
-      } as APIGatewayHeaders;
+      } as ApiHeaders;
 
       return response;
     }

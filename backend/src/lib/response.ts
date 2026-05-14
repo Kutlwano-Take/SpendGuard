@@ -1,6 +1,7 @@
-import type { APIGatewayHeaders, APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 
 type HeaderInput = APIGatewayProxyEvent["headers"] | null | undefined;
+type ApiHeaders = NonNullable<APIGatewayProxyResult["headers"]>;
 
 const requestOriginAllowed = (): string[] => {
   const configuredOrigins = process.env.CORS_ALLOWED_ORIGINS;
@@ -43,7 +44,7 @@ const resolveRequestOrigin = (headers?: HeaderInput): string | null => {
   return anyHeaders.Origin || anyHeaders.origin || null;
 };
 
-export const corsHeaders = (headers?: HeaderInput): APIGatewayHeaders => {
+export const corsHeaders = (headers?: HeaderInput): ApiHeaders => {
   const requestOrigin = resolveRequestOrigin(headers);
   return {
     "Content-Type": "application/json",
