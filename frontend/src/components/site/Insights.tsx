@@ -1,7 +1,31 @@
-import { Calendar, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { Calendar, Download, Sparkles, TrendingDown, TrendingUp, X } from "lucide-react";
 import { SectionHeader } from "./Dashboard";
 
+type TrendPeriod = "7d" | "14d" | "30d" | "1y";
+
+const trendPeriods: TrendPeriod[] = ["7d", "14d", "30d", "1y"];
+const trendData: Record<TrendPeriod, { label: string; data: number[] }> = {
+  "7d": { label: "7 days", data: [34, 42, 38, 52, 48, 61, 57] },
+  "14d": { label: "14 days", data: [42, 38, 56, 48, 64, 58, 72, 68, 80, 74, 88, 82, 95, 90] },
+  "30d": {
+    label: "30 days",
+    data: [36, 40, 44, 41, 52, 48, 55, 58, 60, 57, 66, 62, 70, 68, 76, 72, 81, 78, 84, 80, 90, 86, 92, 88, 96, 91, 99, 94, 101, 98],
+  },
+  "1y": { label: "12 months", data: [48, 55, 52, 61, 68, 64, 72, 78, 74, 83, 88, 91] },
+};
+
+const weeklyReportStats = [
+  { key: "Spent", value: "R842", tail: "-12% vs last week" },
+  { key: "Top cat", value: "Food", tail: "R316" },
+  { key: "Saved", value: "R230", tail: "Auto-routed" },
+  { key: "Insights", value: "4", tail: "2 actionable" },
+];
+
 export function Insights() {
+  const [activePeriod, setActivePeriod] = useState<TrendPeriod>("14d");
+  const [isReportOpen, setIsReportOpen] = useState(false);
+
   return (
     <section id="insights" className="relative px-4 py-28">
       <div className="grid-bg absolute inset-0 -z-10 opacity-30 [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]" />
@@ -16,42 +40,57 @@ export function Insights() {
       />
 
       <div className="mx-auto mt-14 grid max-w-7xl gap-5 lg:grid-cols-3">
-        <TrendChart />
+        <TrendChart activePeriod={activePeriod} onPeriodChange={setActivePeriod} />
         <CategoryDonut />
         <AIInsightsFeed />
         <MonthlyComparison />
-        <WeeklyReport />
+        <WeeklyReport onOpenReport={() => setIsReportOpen(true)} />
       </div>
+
+      <ReportDialog open={isReportOpen} onClose={() => setIsReportOpen(false)} />
     </section>
   );
 }
 
-function TrendChart() {
-  const data = [42, 38, 56, 48, 64, 58, 72, 68, 80, 74, 88, 82, 95, 90];
-  const max = Math.max(...data);
-  const points = data
-    .map((value, index) => `${(index / (data.length - 1)) * 100},${100 - (value / max) * 85}`)
+function TrendChart({
+  activePeriod,
+  onPeriodChange,
+}: {
+  activePeriod: TrendPeriod;
+  onPeriodChange: (period: TrendPeriod) => void;
+}) {
+  const chart = trendData[activePeriod];
+  const max = Math.max(...chart.data);
+  const points = chart.data
+    .map((value, index) => `${(index / (chart.data.length - 1)) * 100},${100 - (value / max) * 85}`)
     .join(" ");
 
   return (
     <div className="glass-strong relative overflow-hidden rounded-3xl p-7 lg:col-span-2">
       <div className="bg-violet/20 absolute -right-10 -top-10 h-72 w-72 rounded-full blur-3xl" />
-      <div className="relative mb-2 flex items-center justify-between">
+      <div className="relative mb-2 flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="text-sm font-medium">Spending Trend</div>
-          <div className="mt-1 text-xs text-muted-foreground">14 days - auto-smoothed</div>
+          <div className="mt-1 text-xs text-muted-foreground">{chart.label} - auto-smoothed</div>
         </div>
         <div className="flex gap-1 text-xs">
-          {["7d", "14d", "30d", "1y"].map((period, index) => (
-            <button
-              key={period}
-              className={`rounded-full px-3 py-1 ${
-                index === 1 ? "bg-aurora text-primary-foreground" : "glass text-muted-foreground"
-              }`}
-            >
-              {period}
-            </button>
-          ))}
+          {trendPeriods.map((period) => {
+            const active = activePeriod === period;
+
+            return (
+              <button
+                key={period}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onPeriodChange(period)}
+                className={`rounded-full px-3 py-1 transition ${
+                  active ? "bg-aurora text-primary-foreground" : "glass text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {period}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -249,7 +288,7 @@ function MonthlyComparison() {
   );
 }
 
-function WeeklyReport() {
+function WeeklyReport({ onOpenReport }: { onOpenReport: () => void }) {
   return (
     <div className="glass-strong relative overflow-hidden rounded-3xl p-7 lg:col-span-2">
       <div className="bg-gold/15 absolute -left-20 -top-20 h-72 w-72 rounded-full blur-3xl" />
@@ -261,18 +300,17 @@ function WeeklyReport() {
           </div>
           <div className="mt-1 text-xs text-muted-foreground">Auto-generated - Mar 4 to Mar 10</div>
         </div>
-        <button className="bg-aurora shadow-glow-gold rounded-full px-4 py-2 text-xs text-primary-foreground">
+        <button
+          type="button"
+          onClick={onOpenReport}
+          className="bg-aurora shadow-glow-gold rounded-full px-4 py-2 text-xs text-primary-foreground transition hover:scale-[1.02]"
+        >
           Open report
         </button>
       </div>
 
       <div className="relative mt-5 grid gap-3 sm:grid-cols-4">
-        {[
-          { key: "Spent", value: "R842", tail: "-12% wow" },
-          { key: "Top cat", value: "Food", tail: "R316" },
-          { key: "Saved", value: "R230", tail: "Auto" },
-          { key: "Insights", value: "4", tail: "2 actionable" },
-        ].map((stat) => (
+        {weeklyReportStats.map((stat) => (
           <div key={stat.key} className="glass rounded-2xl p-4">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
               {stat.key}
@@ -284,4 +322,124 @@ function WeeklyReport() {
       </div>
     </div>
   );
+}
+
+function ReportDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  function handleDownload() {
+    const rows = [
+      ["Metric", "Value", "Note"],
+      ...weeklyReportStats.map((stat) => [stat.key, stat.value, stat.tail]),
+      ["Recommendation", "Cook twice this week", "Estimated monthly impact R1,200"],
+      ["Recommendation", "Review streaming subscriptions", "Estimated monthly impact R220"],
+    ];
+    const csv = rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "spendguard-weekly-report.csv";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 px-4 backdrop-blur-md"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="report-dialog-title"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="glass-strong shadow-elevated w-full max-w-2xl rounded-3xl p-6">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <div className="glass mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs text-muted-foreground">
+              <Calendar className="h-3.5 w-3.5" />
+              Mar 4 to Mar 10
+            </div>
+            <h3 id="report-dialog-title" className="font-display text-3xl font-semibold">
+              Weekly financial report
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              A focused summary of spend, savings, and the two strongest actions for next week.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close report"
+            className="glass grid h-10 w-10 shrink-0 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-4">
+          {weeklyReportStats.map((stat) => (
+            <div key={stat.key} className="glass rounded-2xl p-4">
+              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                {stat.key}
+              </div>
+              <div className="font-display mt-1 text-xl">{stat.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{stat.tail}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="glass rounded-2xl p-5">
+            <div className="text-sm font-medium">Best next action</div>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Cook twice this week to reduce delivery spend. The estimated monthly impact is R1,200.
+            </p>
+          </div>
+          <div className="glass rounded-2xl p-5">
+            <div className="text-sm font-medium">Subscription cleanup</div>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Review overlapping streaming plans. Removing two duplicate services saves about R220.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="bg-aurora shadow-glow-gold inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-primary-foreground transition hover:scale-[1.02]"
+          >
+            <Download className="h-4 w-4" />
+            Download CSV
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="glass-strong rounded-full px-5 py-3 text-sm font-medium transition hover:bg-white/5"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function escapeCsv(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
 }

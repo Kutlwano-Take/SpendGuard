@@ -144,6 +144,10 @@ const runApiTriggered = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
   );
 
   const settings = settingsResult.Item as any;
+  if (settings?.weeklySummary === false) {
+    return json(200, { message: "Weekly summary disabled" });
+  }
+
   const recipientEmail = getUserEmail(event) ?? (settings?.email as string | undefined);
   if (!recipientEmail || typeof recipientEmail !== "string" || !recipientEmail.trim()) {
     throw new ValidationError("User email not configured");

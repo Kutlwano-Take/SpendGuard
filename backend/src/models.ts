@@ -2,6 +2,7 @@ export type ExpenseInput = {
   amount: number;
   category: string;
   date?: string;
+  merchant?: string;
   notes?: string;
 };
 

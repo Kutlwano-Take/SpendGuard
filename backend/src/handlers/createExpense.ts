@@ -25,12 +25,22 @@ const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> 
   const amount = validateNumber(body.amount, 0, 10000000);
   const category = validateCategory(body.category);
   const date = body.date ? validateDate(body.date) : new Date().toISOString().slice(0, 10);
+  const merchant = body.merchant ? sanitizeString(body.merchant, 120) : undefined;
   const notes = body.notes ? sanitizeString(body.notes, 500) : undefined;
 
   const userId = getUserId(event);
   const createdAt = new Date().toISOString();
   const pk = `USER#${userId}`;
   const sk = `EXPENSE#${date}#${expenseId}`;
+  const expense = {
+    expenseId,
+    createdAt,
+    amount,
+    category,
+    date,
+    ...(merchant ? { merchant } : {}),
+    ...(notes ? { notes } : {}),
+  };
 
   await docClient.send(
     new PutCommand({
@@ -41,17 +51,12 @@ const run = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> 
         GSI1PK: pk,
         GSI1SK: sk,
         userId,
-        expenseId,
-        createdAt,
-        amount,
-        category,
-        date,
-        notes,
+        ...expense,
       },
     })
   );
 
-  return json(201, { expenseId, createdAt });
+  return json(201, { expenseId, createdAt, item: expense });
 };
 
 export const handler = withApiResponse(run);

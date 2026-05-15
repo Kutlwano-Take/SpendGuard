@@ -7,20 +7,23 @@ import { Insights } from "@/components/site/Insights";
 import { Nav } from "@/components/site/Nav";
 import { Security } from "@/components/site/Security";
 import { SmartFeatures } from "@/components/site/SmartFeatures";
+import { AuthProvider } from "@/lib/auth-context";
 
 function App() {
   return (
-    <main className="min-h-screen">
-      <Nav />
-      <Hero />
-      <Dashboard />
-      <Insights />
-      <SmartFeatures />
-      <Architecture />
-      <Security />
-      <Engineering />
-      <CTA />
-    </main>
+    <AuthProvider>
+      <main className="min-h-screen">
+        <Nav />
+        <Hero />
+        <Dashboard />
+        <Insights />
+        <SmartFeatures />
+        <Architecture />
+        <Security />
+        <Engineering />
+        <CTA />
+      </main>
+    </AuthProvider>
   );
 }
 
